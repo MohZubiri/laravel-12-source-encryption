@@ -46,6 +46,62 @@ php artisan encrypt-source
 ```
 This command encrypts the files and directories configured in `config/source-encryption.php`. You can create that file interactively with `php artisan source-encryption:install`, or pass paths directly with `--source`.
 
+### How To Choose Files And Directories To Encrypt
+
+You have 3 ways to define what should be encrypted.
+
+#### Option 1: Interactive setup
+Run:
+```bash
+php artisan source-encryption:install
+```
+
+The command will ask:
+- Which files or directories should be encrypted?
+- What is the destination directory?
+- What is the encryption key length?
+
+When it asks for source paths, enter relative paths separated by commas.
+
+Example:
+```text
+app, routes, config/app.php, public/index.php
+```
+
+#### Option 2: Non-interactive setup
+You can pass the paths directly when running the installer.
+
+Example:
+```bash
+php artisan source-encryption:install --source=app --source=routes/api.php --source=config/app.php
+```
+
+This writes the selected paths into `config/source-encryption.php`.
+
+#### Option 3: Manual config
+You can edit `config/source-encryption.php` manually and put the paths inside the `source` array.
+
+Example:
+```php
+return [
+    'source' => [
+        'app',
+        'routes',
+        'config/app.php',
+        'public/index.php',
+    ],
+    'destination' => 'encrypted-source',
+    'key' => $key,
+    'key_length' => $keyLength,
+];
+```
+
+Important notes:
+- Paths must be relative to the Laravel project root.
+- You can mix directories and single files in the same `source` array.
+- If a path does not exist, the installer will reject it.
+- If no sources are configured, `php artisan encrypt-source` will stop and ask you to configure them first.
+
 The default destination directory is `encrypted-source`. You can change it in `config/source-encryption.php` file.
 
 Also the default encryption key length is `16`. You can change it in `config/source-encryption.php` file. `6` is the recommended key length.
