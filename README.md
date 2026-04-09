@@ -17,7 +17,7 @@ You have to [install phpBolt](https://phpbolt.com/download-phpbolt/). The packag
 ### Step 2
 Require the package with composer using the following command:
 ```bash
-composer require thedepart3d/laravel-source-encryption
+composer require mohzubiri/laravel-12-source-encryption
 ```
 ### Step 3
 #### For Laravel
