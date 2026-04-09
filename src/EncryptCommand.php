@@ -40,8 +40,16 @@ class EncryptCommand extends Command
     /**
      * Execute the console command.
      */
-    public function handle()
+    public function handle(): int
     {
+        $sources = $this->resolveSources();
+
+        if ($sources === []) {
+            $this->error('No source paths are configured. Run php artisan source-encryption:install or pass one or more --source options.');
+
+            return self::FAILURE;
+        }
+
         if (!extension_loaded('bolt')) {
             $output = shell_exec('ls ' . ini_get('extension_dir') . ' | grep -i bolt.so');
             if ($output === NULL) {
@@ -56,29 +64,29 @@ class EncryptCommand extends Command
             $this->error('  Extension dir: '.ini_get('extension_dir') .'         ');
             $this->error('  Bolt Installed: ' . $output . '                          ');
             $this->error('                                               ');
-            return 1;
+            return self::FAILURE;
         }
 
-        if (empty($this->option('source'))) {
-            $sources = config('source-encryption.source', ['app', 'database', 'routes', 'config']);
-        } else {
-            $sources = $this->option('source');
-            $sources = explode(',', $sources);
-        }
         if (empty($this->option('destination'))) {
-            $destination = config('source-encryption.destination', 'encrypted');
+            $destination = config('source-encryption.destination', 'encrypted-source');
         } else {
             $destination = $this->option('destination');
         }
+
         if (empty($this->option('key'))) {
             $key = config('source-encryption.key');
         } else {
             $key = $this->option('key');
         }
+
         if (empty($this->option('keylength'))) {
-            $keyLength = env('SOURCE_ENCRYPTION_LENGTH', 16);
+            $keyLength = (int) config('source-encryption.key_length', env('SOURCE_ENCRYPTION_LENGTH', 16));
         } else {
-            $keyLength = $this->option('keylength');
+            $keyLength = (int) $this->option('keylength');
+        }
+
+        if (empty($key)) {
+            $key = bin2hex(random_bytes($keyLength));
         }
 
         if (!$this->option('force')
@@ -87,45 +95,54 @@ class EncryptCommand extends Command
         ) {
             $this->line('Command canceled.');
 
-            return 1;
+            return self::FAILURE;
         }
 
         File::deleteDirectory(base_path($destination));
         File::makeDirectory(base_path($destination));
 
         foreach ($sources as $source) {
-            if (!File::exists($source)) {
+            if (!File::exists(base_path($source))) {
                 $this->error("File $source does not exist.");
 
-                return 1;
+                return self::FAILURE;
             }
 
-            @File::makeDirectory($destination.'/'.File::dirname($source), 493, true);
-            if (File::isFile($source)) {
-                self::encryptFile($source, $destination, $keyLength);
+            @File::makeDirectory(base_path($destination.'/'.File::dirname($source)), 493, true);
+            if (File::isFile(base_path($source))) {
+                $this->encryptFile($source, $destination, $key);
                 continue;
             }
-            $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator(base_path($source)));
+
+            $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator(base_path($source), RecursiveDirectoryIterator::SKIP_DOTS));
             foreach ($files as $file) {
                 $filePath = Str::replaceFirst(base_path(), '', $file->getRealPath());
-                self::encryptFile($filePath, $destination, $keyLength);
+                $this->encryptFile($filePath, $destination, $key);
             }
         }
+
         $this->info('Encrypting Completed Successfully!');
         $this->info("Destination directory: $destination");
 
-        return 0;
+        return self::SUCCESS;
     }
 
-    private function encryptFile($filePath, $destination, $keyLength)
+    /**
+     * @return array<int, string>
+     */
+    private function resolveSources(): array
     {
-        if (config('source-encryption.key') === "") {
-            $key = Str::random($keyLength);
-        } elseif (!empty($this->option('key'))) {
-            $key = $this->option('key');
+        if (empty($this->option('source'))) {
+            $sources = config('source-encryption.source', []);
         } else {
-            $key = config('source-encryption.key');
+            $sources = explode(',', $this->option('source'));
         }
+
+        return array_values(array_filter(array_map(static fn (string $source): string => trim($source), $sources)));
+    }
+
+    private function encryptFile(string $filePath, string $destination, string $key): void
+    {
         if (File::isDirectory(base_path($filePath))) {
             if (!File::exists(base_path($destination.$filePath))) {
                 File::makeDirectory(base_path("$destination/$filePath"), 493, true);
@@ -141,7 +158,7 @@ class EncryptCommand extends Command
                 $this->warn("Encryption of $extension files is not currently supported. These files will be copied without change.");
                 $this->warned[] = $extension;
             }
-            File::copy(base_path($filePath), str_replace('/encrypted-source/', '', base_path("$destination/$filePath")));
+            File::copy(base_path($filePath), base_path("$destination/$filePath"));
 
             return;
         }
@@ -157,7 +174,7 @@ bolt_decrypt( __FILE__ , '$key'); return 0;
             $fileContents = preg_replace($pattern, '', $fileContents);
         }
         $cipher = bolt_encrypt($fileContents, $key);
-        File::isDirectory(dirname("$destination/$filePath")) or File::makeDirectory(dirname("$destination/$filePath"), 0755, true, true);
+        File::isDirectory(base_path(dirname("$destination/$filePath"))) or File::makeDirectory(base_path(dirname("$destination/$filePath")), 0755, true, true);
         File::put(base_path("$destination/$filePath"), $prepend.$cipher);
 
         unset($cipher);

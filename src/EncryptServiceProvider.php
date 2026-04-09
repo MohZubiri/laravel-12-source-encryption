@@ -16,37 +16,37 @@ class EncryptServiceProvider extends ServiceProvider
 {
     /**
      * Register services.
-     *
-     * @return void
      */
-    public function register()
+    public function register(): void
     {
-        // Register hard-delete-expired artisan command
-        $this->commands([
-            EncryptCommand::class,
-        ]);
+        $this->mergeConfigFrom(__DIR__.'/../config/source-encryption.php', 'source-encryption');
     }
 
     /**
      * Bootstrap services.
-     *
-     * @return void
      */
-    public function boot()
+    public function boot(): void
     {
-        // Publish config file
+        if (! $this->app->runningInConsole()) {
+            return;
+        }
+
         $configPath = __DIR__.'/../config/source-encryption.php';
-        $consolePath = __DIR__.'/../app/Console/Commands/GenerateEncryptionKey.php';
+
+        $this->commands([
+            EncryptCommand::class,
+            GenerateEncryptionKeyCommand::class,
+            InstallCommand::class,
+        ]);
+
         if (function_exists('config_path')) {
             $publishPath = config_path('source-encryption.php');
-            $pubConfPath = base_path('/app/Console/Commands/GenerateEncryptionKey.php');
         } else {
             $publishPath = base_path('config/source-encryption.php');
-            $pubConfPath = base_path('/app/Console/Commands/GenerateEncryptionKey.php');
         }
+
         $this->publishes([
             $configPath => $publishPath,
-            $consolePath => $pubConfPath
         ], 'encryptionConfig');
     }
 }
