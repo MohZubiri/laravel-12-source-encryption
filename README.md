@@ -91,8 +91,8 @@ return [
         'public/index.php',
     ],
     'destination' => 'encrypted-source',
-    'key' => $key,
-    'key_length' => $keyLength,
+    'key' => env('SOURCE_ENCRYPTION_KEY'),
+    'key_length' => (int) env('SOURCE_ENCRYPTION_LENGTH', 16),
 ];
 ```
 
@@ -101,6 +101,7 @@ Important notes:
 - You can mix directories and single files in the same `source` array.
 - If a path does not exist, the installer will reject it.
 - If no sources are configured, `php artisan encrypt-source` will stop and ask you to configure them first.
+- If you edit `config/source-encryption.php` in an app that uses cached config, refresh Laravel's config cache before running `php artisan encrypt-source`.
 
 The default destination directory is `encrypted-source`. You can change it in `config/source-encryption.php` file.
 
@@ -128,6 +129,7 @@ This command has these optional options:
 | `php artisan encrypt-source`                                  | Encrypts the configured source paths using the saved destination and key length. If the destination directory exists, asks for delete it. |
 | `php artisan encrypt-source --force`                          | Encrypts the configured source paths using the saved destination and key length. If the destination directory exists, deletes it.         |
 | `php artisan encrypt-source --source=app`                     | Encrypts `app` directory to the default destination with default keylength.                                       |
+| `php artisan encrypt-source --source=app --source=routes/api.php` | Encrypts multiple sources passed via repeated `--source` options.                                             |
 | `php artisan encrypt-source --source=app,routes`              | Encrypts only the `app` and `routes` paths without changing the saved config.                                     |
 | `php artisan encrypt-source --destination=encrypted-source`               | Encrypts the configured source paths to `encrypted-source` directory.                                                  |
 | `php artisan encrypt-source --destination=encrypted-source --keylength=8` | Encrypts the configured source paths to `encrypted-source` directory and the encryption key length is `8`.                                 |

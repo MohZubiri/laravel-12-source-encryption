@@ -188,21 +188,11 @@ class InstallCommand extends Command
         return <<<PHP
 <?php
 
-\$keyLength = env('SOURCE_ENCRYPTION_LENGTH', {$keyLengthExport});
-
-// Generate a default key when one is not defined in the environment.
-// You can also create one via: php artisan make:encryptionKey
-\$key = env('SOURCE_ENCRYPTION_KEY');
-
-if (\$key === null || \$key === '') {
-    \$key = bin2hex(random_bytes(\$keyLength));
-}
-
 return [
     'source'      => {$sourcesExport},
     'destination' => {$destinationExport},
-    'key' => \$key,
-    'key_length'  => \$keyLength,
+    'key' => env('SOURCE_ENCRYPTION_KEY'),
+    'key_length'  => (int) env('SOURCE_ENCRYPTION_LENGTH', {$keyLengthExport}),
 ];
 PHP;
     }
