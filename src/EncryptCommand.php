@@ -12,9 +12,10 @@ namespace thedepart3d\LaravelSourceEncryption;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
-use Illuminate\Support\Str;
-use RecursiveDirectoryIterator;
-use RecursiveIteratorIterator;
+use RuntimeException;
+use thedepart3d\LaravelSourceEncryption\Encoders\BoltEncryptionDriver;
+use thedepart3d\LaravelSourceEncryption\Encoders\EncryptionDriver;
+use thedepart3d\LaravelSourceEncryption\Encoders\SourceGuardianEncryptionDriver;
 
 class EncryptCommand extends Command
 {
@@ -26,23 +27,23 @@ class EncryptCommand extends Command
     protected $signature = 'encrypt-source
                 { --source=* : Path(s) to encrypt. Repeat the option or pass a comma-separated list }
                 { --destination= : Destination directory }
+                { --driver= : Encoder driver to use (sourceguardian or bolt) }
+                { --binary= : Path to the encoder executable for external drivers }
                 { --force : Force the operation to run when destination directory already exists }
-                { --key= : Custom Encryption Key}
-                { --keylength= : Encryption key length }';
+                { --key= : Custom Encryption Key for the bolt driver }
+                { --keylength= : Encryption key length for the bolt driver }';
+
     /**
      * The console command description.
      *
      * @var string
      */
-    protected $description = 'Encrypts App Source Files';
-    protected $warned = [];
+    protected $description = 'Encrypts app source files';
+
     private ?array $packageConfig = null;
     private ?array $publishedConfig = null;
     private bool $warnedAboutStaleConfig = false;
 
-    /**
-     * Execute the console command.
-     */
     public function handle(): int
     {
         $sources = $this->resolveSources();
@@ -53,36 +54,20 @@ class EncryptCommand extends Command
             return self::FAILURE;
         }
 
-        if (!extension_loaded('bolt')) {
-            $output = shell_exec('ls ' . ini_get('extension_dir') . ' | grep -i bolt.so');
-            if ($output === NULL) {
-                $output = "NO ";
-            } else {
-                $output = "Yes";
+        foreach ($sources as $source) {
+            if (! File::exists(base_path($source))) {
+                $this->error("File {$source} does not exist.");
+
+                return self::FAILURE;
             }
-            // Do not change spaces it all aligns perfectly when displayed
-            $this->error('                                               ');
-            $this->error('  Please install bolt.so https://phpBolt.com   ');
-            $this->error('  PHP Version '.phpversion(). '                            ');
-            $this->error('  Extension dir: '.ini_get('extension_dir') .'         ');
-            $this->error('  Bolt Installed: ' . $output . '                          ');
-            $this->error('                                               ');
-            return self::FAILURE;
         }
 
         $destination = $this->resolveDestination();
+        $driverName = $this->resolveDriver();
 
-        $key = $this->resolveKey();
-
-        $keyLength = $this->resolveKeyLength();
-
-        if (empty($key)) {
-            $key = bin2hex(random_bytes($keyLength));
-        }
-
-        if (!$this->option('force')
+        if (! $this->option('force')
             && File::exists(base_path($destination))
-            && !$this->confirm("The directory $destination already exists. Delete directory?")
+            && ! $this->confirm("The directory {$destination} already exists. Delete directory?")
         ) {
             $this->line('Command canceled.');
 
@@ -90,30 +75,20 @@ class EncryptCommand extends Command
         }
 
         File::deleteDirectory(base_path($destination));
-        File::makeDirectory(base_path($destination));
+        File::makeDirectory(base_path($destination), 0755, true);
 
-        foreach ($sources as $source) {
-            if (!File::exists(base_path($source))) {
-                $this->error("File $source does not exist.");
+        try {
+            $driver = $this->makeDriver($driverName);
+            $driver->encrypt($sources, $destination, $this->driverOptions($driverName));
+        } catch (RuntimeException $exception) {
+            $this->error($exception->getMessage());
 
-                return self::FAILURE;
-            }
-
-            @File::makeDirectory(base_path($destination.'/'.File::dirname($source)), 493, true);
-            if (File::isFile(base_path($source))) {
-                $this->encryptFile($source, $destination, $key);
-                continue;
-            }
-
-            $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator(base_path($source), RecursiveDirectoryIterator::SKIP_DOTS));
-            foreach ($files as $file) {
-                $filePath = Str::replaceFirst(base_path(), '', $file->getRealPath());
-                $this->encryptFile($filePath, $destination, $key);
-            }
+            return self::FAILURE;
         }
 
-        $this->info('Encrypting Completed Successfully!');
-        $this->info("Destination directory: $destination");
+        $this->info('Encrypting completed successfully!');
+        $this->info("Driver: {$driverName}");
+        $this->info("Destination directory: {$destination}");
 
         return self::SUCCESS;
     }
@@ -174,7 +149,76 @@ class EncryptCommand extends Command
         return 'encrypted-source';
     }
 
-    private function resolveKey(): ?string
+    private function resolveDriver(): string
+    {
+        $driver = trim((string) $this->option('driver'));
+
+        if ($driver !== '') {
+            return strtolower($driver);
+        }
+
+        $runtimeDriver = trim((string) config('source-encryption.driver', ''));
+        $publishedDriver = trim((string) $this->publishedConfigValue('driver', ''));
+
+        if ($this->shouldPreferPublishedConfig('driver', $runtimeDriver, $publishedDriver)) {
+            $this->warnAboutStaleConfiguration();
+
+            return strtolower($publishedDriver);
+        }
+
+        if ($runtimeDriver !== '') {
+            return strtolower($runtimeDriver);
+        }
+
+        if ($publishedDriver !== '') {
+            return strtolower($publishedDriver);
+        }
+
+        return 'sourceguardian';
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function driverOptions(string $driver): array
+    {
+        return match ($driver) {
+            'sourceguardian' => [
+                'binary' => $this->resolveBinary(),
+            ],
+            'bolt' => [
+                'key' => $this->resolveBoltKey(),
+                'key_length' => $this->resolveBoltKeyLength(),
+            ],
+            default => throw new RuntimeException("Unsupported encryption driver [{$driver}]. Supported drivers are [sourceguardian, bolt]."),
+        };
+    }
+
+    private function resolveBinary(): ?string
+    {
+        $binary = trim((string) $this->option('binary'));
+
+        if ($binary !== '') {
+            return $binary;
+        }
+
+        $runtimeBinary = trim((string) config('source-encryption.binary', ''));
+        $publishedBinary = trim((string) $this->publishedConfigValue('binary', ''));
+
+        if ($this->shouldPreferPublishedConfig('binary', $runtimeBinary, $publishedBinary)) {
+            $this->warnAboutStaleConfiguration();
+
+            return $publishedBinary !== '' ? $publishedBinary : null;
+        }
+
+        if ($runtimeBinary !== '') {
+            return $runtimeBinary;
+        }
+
+        return $publishedBinary !== '' ? $publishedBinary : null;
+    }
+
+    private function resolveBoltKey(): ?string
     {
         $key = trim((string) $this->option('key'));
 
@@ -196,7 +240,7 @@ class EncryptCommand extends Command
             : (is_string($publishedKey) && trim($publishedKey) !== '' ? $publishedKey : null);
     }
 
-    private function resolveKeyLength(): int
+    private function resolveBoltKeyLength(): int
     {
         $keyLength = $this->option('keylength');
 
@@ -301,43 +345,12 @@ class EncryptCommand extends Command
         $this->warnedAboutStaleConfig = true;
     }
 
-    private function encryptFile(string $filePath, string $destination, string $key): void
+    private function makeDriver(string $driver): EncryptionDriver
     {
-        if (File::isDirectory(base_path($filePath))) {
-            if (!File::exists(base_path($destination.$filePath))) {
-                File::makeDirectory(base_path("$destination/$filePath"), 493, true);
-            }
-
-            return;
-        }
-
-        $extension = Str::after($filePath, '.');
-
-        if ($extension == 'blade.php' || $extension != 'php') {
-            if (!in_array($extension, $this->warned)) {
-                $this->warn("Encryption of $extension files is not currently supported. These files will be copied without change.");
-                $this->warned[] = $extension;
-            }
-            File::copy(base_path($filePath), base_path("$destination/$filePath"));
-
-            return;
-        }
-
-        $fileContents = File::get(base_path($filePath));
-
-        $prepend = "<?php
-bolt_decrypt( __FILE__ , '$key'); return 0;
-##!!!##";
-        $pattern = '/\<\?php/m';
-        preg_match($pattern, $fileContents, $matches);
-        if (!empty($matches[0])) {
-            $fileContents = preg_replace($pattern, '', $fileContents);
-        }
-        $cipher = bolt_encrypt($fileContents, $key);
-        File::isDirectory(base_path(dirname("$destination/$filePath"))) or File::makeDirectory(base_path(dirname("$destination/$filePath")), 0755, true, true);
-        File::put(base_path("$destination/$filePath"), $prepend.$cipher);
-
-        unset($cipher);
-        unset($fileContents);
+        return match ($driver) {
+            'sourceguardian' => new SourceGuardianEncryptionDriver($this),
+            'bolt' => new BoltEncryptionDriver($this),
+            default => throw new RuntimeException("Unsupported encryption driver [{$driver}]. Supported drivers are [sourceguardian, bolt]."),
+        };
     }
 }

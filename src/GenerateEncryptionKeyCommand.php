@@ -18,13 +18,17 @@ class GenerateEncryptionKeyCommand extends Command
      *
      * @var string
      */
-    protected $description = 'Generate a source encryption key';
+    protected $description = 'Generate a legacy bolt encryption key';
 
     /**
      * Execute the console command.
      */
     public function handle(): int
     {
+        if (config('source-encryption.driver', 'sourceguardian') !== 'bolt') {
+            $this->warn('The active driver is not bolt. This command is only needed when you explicitly use the bolt driver.');
+        }
+
         $keyLength = (int) config('source-encryption.key_length', env('SOURCE_ENCRYPTION_LENGTH', 16));
         $token = bin2hex(random_bytes($keyLength));
 

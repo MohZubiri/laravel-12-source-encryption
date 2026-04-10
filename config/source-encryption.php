@@ -3,6 +3,8 @@
 return [
     'source'      => [], // Configure via php artisan source-encryption:install or --source
     'destination' => 'encrypted-source', // Destination path
-    'key' => env('SOURCE_ENCRYPTION_KEY'), // custom key
-    'key_length'  => (int) env('SOURCE_ENCRYPTION_LENGTH', 16), // Encryption key length
+    'driver' => env('SOURCE_ENCRYPTION_DRIVER', 'sourceguardian'), // sourceguardian or bolt
+    'binary' => env('SOURCE_ENCRYPTION_BINARY'), // External encoder binary path, for example /usr/local/bin/sgencoder
+    'key' => env('SOURCE_ENCRYPTION_KEY'), // Legacy bolt key
+    'key_length'  => (int) env('SOURCE_ENCRYPTION_LENGTH', 16), // Legacy bolt key length
 ];
